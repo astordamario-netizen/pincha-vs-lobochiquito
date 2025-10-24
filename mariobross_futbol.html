@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mario-style Fútbol (Red vs Blue) — Demo</title>
+  <style>
+    html,body{height:100%;margin:0;background:#7ec0ff;display:flex;align-items:center;justify-content:center}
+    canvas{background:linear-gradient(#87CEEB,#6FB3E6);box-shadow:0 8px 30px rgba(0,0,0,0.3);border-radius:8px}
+    .info{position:fixed;left:12px;top:12px;background:rgba(255,255,255,0.9);padding:8px;border-radius:6px;font-family:sans-serif}
+  </style>
+</head>
+<body>
+  <div class="info">Controles: W = adelante, A = izquierda, D = derecha, S = atrás • Pulsa R para reiniciar</div>
+  <canvas id="game" width="1000" height="540"></canvas>
+  <script>
+    // Mario-style fútbol (simple, todo en 1 archivo)
+    // Autor: ChatGPT (adaptado al pedido)
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+
+    // --- Config
+    const GRAVITY = 0.9;
+    const FRICTION = 0.85;
+    const PLAYER_RADIUS = 18;
+    const GOAL_WIDTH = 140;
+    const GOAL_HEIGHT = 120;
+
+    // --- Estado del juego
+    let keys = {};
+    let gameOver = false;
+    let score = { red: 0, blue: 0 };
+
+    // Player object constructor
+    function Player(x,y,team,isGoalie,isControlled){
+      this.x = x; this.y = y; this.vx = 0; this.vy = 0;
+      this.team = team; // 'red' o 'blue'
+      this.isGoalie = isGoalie || false;
+      this.isControlled = isControlled || false; // jugador humano
+      this.radius = PLAYER_RADIUS;
+      this.speed = isGoalie ? 2.2 : 3.2;
+      this.color = team === 'red' ? ['#fff','#d33'] : ['#fff','#2d6'];
+      // color[0] = camiseta (blanca), color[1] = franjas (rojo/azul)
+      this.onGround = false;
+      this.jumpPower = isGoalie ? -12 : -14;
+    }
+
+    Player.prototype.update = function(dt){
+      if(this.isControlled){
+        // controles: W adelante (moverse hacia el frente del campo, que en este juego es hacia la derecha),
+        // A izquierda, D derecha, S atrás (hacia la izquierda)
+        // Nota: si prefieres W = subir, dime y lo cambio.
+        if(keys['a']) this.vx -= this.speed * 0.7;
+        if(keys['d']) this.vx += this.speed * 0.7;
+        if(keys['w']) this.vx += this.speed * 0.9; // "adelante" empuja a la derecha
+        if(keys['s']) this.vx -= this.speed * 0.9; // "atrás" empuja a la izquierda
+        // simple salto si está en suelo y pulsa W+Shift o cómodamente Space (soporte básico)
+        if((keys[' ' ] || keys['shift']) && this.onGround){ this.vy = this.jumpPower; this.onGround = false; }
+      } else {
+        // IA básica
+        aiMove(this);
+      }
+
+      // aplicar física
+      this.vy += GRAVITY * dt;
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+
+      // límites del campo (no salir del canvas horizontalmente)
+      if(this.x < this.radius) { this.x = this.radius; this.vx *= -0.2 }
+      if(this.x > W - this.radius) { this.x = W - this.radius; this.vx *= -0.2 }
+
+      // suelo
+      const groundY = H - 40;
+      if(this.y + this.radius > groundY){
+        this.y = groundY - this.radius; this.vy = 0; this.onGround = true;
+        this.vx *= FRICTION;
+      }
+
+      // resistencia
+      this.vx *= 0.995;
+
+      // limite de velocidad
+      if(this.vx > 8) this.vx = 8;
+      if(this.vx < -8) this.vx = -8;
+    }
+
+    Player.prototype.draw = function(ctx){
+      // cuerpo
+      ctx.save();
+      ctx.translate(this.x,this.y);
+      // sombra
+      ctx.beginPath(); ctx.ellipse(0, this.radius+10, this.radius*1.2, 8, 0,0,Math.PI*2); ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fill();
+      // cuerpo (simple)
+      ctx.beginPath(); ctx.arc(0, -6, this.radius, 0, Math.PI*2); ctx.fillStyle = this.color[0]; ctx.fill();
+      // franjas/pecho
+      ctx.beginPath(); ctx.moveTo(-this.radius/2, -this.radius/2); ctx.lineTo(this.radius/2, -this.radius/2); ctx.lineWidth = 6; ctx.strokeStyle = this.color[1]; ctx.stroke();
+      // cara (ojo)
+      ctx.beginPath(); ctx.arc(this.radius/3, -this.radius+6, 3, 0, Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
+      // número pequeño
+      ctx.fillStyle = '#000'; ctx.font = '12px sans-serif'; ctx.textAlign='center'; ctx.fillText(this.isGoalie? 'G' : '', 0, -this.radius-6);
+      ctx.restore();
+    }
+
+    // Ball
+    const ball = { x: W/2, y: H/2, vx: 0, vy: 0, r: 12 };
+
+    function resetBall(center){
+      ball.x = center ? W/2 : (Math.random()<0.5?W*0.3:W*0.7);
+      ball.y = H/2; ball.vx = 0; ball.vy = 0;
+    }
+
+    function updateBall(dt){
+      ball.vy += GRAVITY * 0.7 * dt;
+      ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+
+      // colisiones con suelo
+      const groundY = H - 40;
+      if(ball.y + ball.r > groundY){ ball.y = groundY - ball.r; ball.vy *= -0.45; ball.vx *= 0.98; if(Math.abs(ball.vy) < 1) ball.vy = 0; }
+
+      // paredes
+      if(ball.x - ball.r < 0){ ball.x = ball.r; ball.vx *= -0.6 }
+      if(ball.x + ball.r > W){ ball.x = W - ball.r; ball.vx *= -0.6 }
+
+      // fricción
+      ball.vx *= 0.999;
+
+      // colisión con jugadores
+      const playersAll = players;
+      for(let p of playersAll){
+        const dx = ball.x - p.x; const dy = ball.y - p.y; const dist = Math.hypot(dx,dy);
+        if(dist < ball.r + p.radius){
+          // empujar la bola
+          const nx = dx/dist, ny = dy/dist;
+          const relSpeed = (ball.vx - p.vx) * nx + (ball.vy - p.vy) * ny;
+          const kickPower = p.isControlled ? 6 : 4.2;
+          ball.vx += nx * (kickPower + Math.max(0, -relSpeed))*1.2;
+          ball.vy += ny * (kickPower + Math.max(0, -relSpeed))*1.0 - 2;
+          // empujar jugador un poco
+          p.vx -= nx*0.6; p.vy -= ny*0.6;
+        }
+      }
+
+      // marcar goles (simple: comprobar si la bola pasa dentro de la portería en vertical)
+      // portería izquierda (blue defiende left)
+      const goalLeftX = 0; const goalRightX = W;
+      const goalTop = H - 40 - GOAL_HEIGHT;
+      if(ball.x - ball.r <= 0 && ball.y > goalTop && ball.y < H - 40){
+        // gol para RED
+        score.red += 1; resetPosAfterGoal();
+      }
+      if(ball.x + ball.r >= W && ball.y > goalTop && ball.y < H - 40){
+        // gol para BLUE
+        score.blue += 1; resetPosAfterGoal();
+      }
+    }
+
+    function resetPosAfterGoal(){
+      resetBall(true);
+      // recolocar jugadores
+      setupPlayers();
+    }
+
+    // --- IA básica
+    function aiMove(p){
+      // guardameta: se queda cerca de su arco
+      const targetX = p.team === 'red' ? W*0.2 : W*0.8;
+      const sideFactor = p.team === 'red' ? 1 : -1;
+      if(p.isGoalie){
+        // moverse horizontal cerca de la porteria
+        const dx = targetX - p.x;
+        p.vx += Math.sign(dx) * 0.15;
+        // si la bola está cerca, chuta/lanza
+        if(Math.hypot(ball.x - p.x, ball.y - p.y) < 120){
+          p.vx += (ball.x - p.x) * 0.008; if(p.onGround && Math.random()<0.005) p.vy = p.jumpPower;
+        }
+      } else {
+        // jugadores de campo: ir hacia la bola con cierta inteligencia
+        const dx = ball.x - p.x; const dy = ball.y - p.y;
+        if(Math.abs(dx) > 20) p.vx += Math.sign(dx) * 0.12;
+        // evitar juntarse demasiado con compañeros
+        for(let other of players){ if(other !== p){ const d = Math.hypot(p.x-other.x,p.y-other.y); if(d < 36) p.vx += (p.x-other.x)*0.02; }}
+        // a veces saltar para golpear la pelota
+        if(p.onGround && Math.hypot(dx,dy) < 60 && Math.random() < 0.02) p.vy = p.jumpPower;
+      }
+    }
+
+    // --- crear jugadores
+    let players = [];
+    function setupPlayers(){
+      players = [];
+      // Equipo rojo (izquierda) 4 jugadores + 1 arquero
+      const redStartX = W*0.25; const blueStartX = W*0.75;
+      // arquero red
+      players.push(new Player(60, H-100, 'red', true, false));
+      // 4 jugadores red
+      for(let i=0;i<4;i++) players.push(new Player(redStartX + i*30, H-120 - (i%2)*10, 'red', false, i===0));
+      // marcar el primer jugador como el controlado por el humano
+      players[1].isControlled = true; // el jugador humano es del equipo rojo
+
+      // Equipo blue (derecha)
+      players.push(new Player(W-60, H-100, 'blue', true, false));
+      for(let i=0;i<4;i++) players.push(new Player(blueStartX - i*30, H-120 - (i%2)*10, 'blue', false, false));
+
+      // Asegurar que hay exactamente 10 jugadores
+      // Si quieres otra posición o que el humano sea otro, me dices.
+    }
+
+    setupPlayers(); resetBall(true);
+
+    // controles
+    window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if(e.key.toLowerCase()==='r'){ score={red:0,blue:0}; resetPosAfterGoal(); } });
+    window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+    // --- loop principal
+    let last = performance.now();
+    function loop(t){
+      const dt = Math.min(1/30, (t-last)/16.6667); last = t;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function update(dt){
+      if(gameOver) return;
+      // actualizar jugadores
+      for(let p of players) p.update(dt);
+      // actualizar bola
+      updateBall(dt);
+    }
+
+    function drawField(ctx){
+      // césped
+      ctx.fillStyle = '#3aa14a'; ctx.fillRect(0, H-240, W, 240);
+      // líneas
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.rect(20, H-240+10, W-40, 220); ctx.stroke();
+      // linea central
+      ctx.beginPath(); ctx.moveTo(W/2, H-240+10); ctx.lineTo(W/2, H-20); ctx.stroke();
+      // porterías (dibujar simple)
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillRect(0, H-40 - GOAL_HEIGHT, 8, GOAL_HEIGHT);
+      ctx.fillRect(W-8, H-40 - GOAL_HEIGHT, 8, GOAL_HEIGHT);
+      // marcador
+      ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.font='20px sans-serif'; ctx.fillText('Rojo: '+score.red, 24, 28); ctx.fillText('Azul: '+score.blue, W-120, 28);
+    }
+
+    function draw(){
+      ctx.clearRect(0,0,W,H);
+      // cielo
+      const grad = ctx.createLinearGradient(0,0,0,H);
+      grad.addColorStop(0,'#7ec0ff'); grad.addColorStop(1,'#bfe6ff'); ctx.fillStyle = grad; ctx.fillRect(0,0,W,H);
+
+      drawField(ctx);
+
+      // dibujar jugadores
+      for(let p of players) p.draw(ctx);
+
+      // dibujar pelota
+      ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+      ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r-3, 0, Math.PI*2); ctx.fillStyle='#000'; ctx.globalAlpha=0.12; ctx.fill(); ctx.globalAlpha=1;
+
+      // texto instrucciones pequeñas
+      ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.font='12px sans-serif'; ctx.fillText('Jugador controlado tiene camiseta roja-blanca (presiona R para reiniciar)', 24, H-6);
+    }
+
+    // reiniciar o ajustar tamaño (simple)
+    window.addEventListener('resize', ()=>{});
+
+    // iniciar
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
